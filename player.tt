@@ -1,0 +1,180 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <script src="/hls/js/jquery-2.2.4.min.js"></script>
+    <script src="/hls/js/confirm.js"></script>
+    <script src="/hls/js/hls.js"></script> 
+    <link rel="stylesheet" type="text/css" href="/hls/css/confirm.css" />
+</head>
+<body>
+
+<video id="video1" autoplay controls preload="auto" width="100%"></video>
+
+<script>
+  video = document.getElementById('video1');
+  if(Hls.isSupported()) {
+    var hls = new Hls();
+    hls.loadSource('[% src %]');
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED,function() {
+      [% IF start > 0 %]
+      hls.startLoad([% start %]);
+      [% END %]
+      video.play();
+    });
+  }
+  else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    /* iOS */
+    video.src = '[% src %]#t=[% start %]';
+    video.addEventListener('canplay', function() {
+      video.play();
+    });
+  }
+</script>
+
+<script>
+// https://developer.mozilla.org/en-US/docs/Web/HTML/Element/video
+// https://developer.mozilla.org/en-US/docs/Web/Guide/Events/Media_events
+
+// TODO: popup window on finish, with delete link
+
+var position = 0;
+var state = "stopped";
+var isFullscreen = 0;
+var timerId = 0;
+
+var isIOS = 0;
+if ( navigator.userAgent.toLowerCase().match(/(iPad|iPhone|iPod)/i) ) {
+    isIOS = 1;
+}
+
+// No position updates to the database for this long after loading the page
+// This helps in case the video is accidentally started and you want to
+// cancel playback before it wipes your old position data.
+var safetyMode = 1;
+setTimeout( function() {
+    safetyMode = 0;
+}, 30000 );
+
+var scheduleNext = function(length) {
+    console.log("scheduling next update in " + (length / 1000) + "s");
+    
+    if ( timerId != 0 )
+        clearTimeout(timerId);
+    
+    timerId = setTimeout(updateWatchStatus, length);
+};
+
+// called every 5 seconds while playing. If paused, timer stops until played again
+var updateWatchStatus = function() {
+    console.log("updateWatchStatus state=" + state + ", position=" + position);
+    
+    if ( state != "stopped" && position > 0 ) {
+        if ( safetyMode ) {
+            console.log("Skipping db update due to 30s safety mode");
+            scheduleNext(5000);
+            return;
+        }
+        
+        $.ajax( {
+            url: "/hls/index.cgi",
+            type: "GET",
+            data: {
+                action: "update_watch",
+                id: [% id %],
+                position: position,
+            },
+        } )
+        .done( function(resp) {
+            if ( state == "playing" ) {
+                scheduleNext(5000);
+            }
+            else {
+                console.log("updated ok, but no longer playing, not scheduling next update");
+            }
+        } )
+        .fail( function(xhr, status, errorThrown) {
+            document.getElementById('video1').pause();
+            console.log("update_watch error: " + errorThrown);
+            alert("update_watch error: " + errorThrown);
+        } );
+    }
+};
+
+$("#video1").bind("playing", function() {
+    state = "playing";
+    
+    console.log("event: playing");
+    scheduleNext(5000);
+
+    // hack to force fullscreen on iOS
+    if ( isIOS && !isFullscreen ) {
+        this.webkitEnterFullscreen();
+        isFullscreen = 1;
+    }
+});
+
+$("#video1").bind("pause", function() {
+    console.log("event: pause");
+    state = "stopped";
+});
+
+$("#video1").bind("ended", function() {
+    console.log("event: ended");
+    state = "ended";
+    position = Math.round(this.duration + 0.5);
+    scheduleNext(1);
+    
+    /*
+    $.confirm({
+        'title': 'Delete Confirmation',
+        'message': 'The video has ended. Delete it?',
+        'buttons': {
+            'Yes': {
+                'class': 'blue',
+                'action': function() {
+                    
+                    $.ajax( {
+                        url: "/hls/index.cgi",
+                        type: "GET",
+                        dataType: 'json',
+                        data: {
+                            action: 'delete',
+                            id: id,
+                        },
+                        success: function(data) {
+                            if (data.error) {
+                                console.log("action=delete id=" + id + " failed");
+                                console.dir(data);
+                                alert("Delete failed: " + data.error);
+                            }
+                            else {
+                                window.location.replace("/hls/");
+                            }                
+                        },
+                        error: function(data) {
+                            console.log("action=delete id=" + id + " failed");
+                            console.dir(data);
+                            alert("Delete failed: " + data.error);
+                        },
+                    } );
+                    
+                }
+            },
+            'No': {
+                'class': 'gray',
+                'action': function() {} // Nothing to do in this case. You can as well omit the action property.
+            }
+        }
+    });
+    */
+});
+
+$("#video1").bind("timeupdate", function() {
+    position = Math.round(this.currentTime);
+});
+</script>
+
+</body>
+
+</html>

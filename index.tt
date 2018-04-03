@@ -1,0 +1,191 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Video Station HLS</title>
+
+<script src="/hls/js/jquery-2.2.4.min.js"></script>
+<script src="/hls/js/jquery.blockUI.js"></script>
+
+<style type="text/css">
+div {
+  display: flex;
+  flex-wrap: wrap;
+} 
+
+a {
+  display: inline-block;
+  margin-bottom: 8px;
+  width: calc(50% - 4px);
+  text-decoration: none;
+}
+
+a img {
+    max-width: 100%;
+}
+
+figcaption {
+    color: black;
+    font: 10px/1.5 Verdana, Helvetica, sans-serif;
+}
+
+figcaption.playable {
+    color: green;
+}
+
+@media screen and (min-width: 50em) {
+  a {
+    width: calc(25% - 6px);
+  }
+}
+
+.empty-bar {
+    width: 100%;
+    height: 5px;
+    position: relative;
+    background-color: #f1f1f1;
+}
+
+.filled-bar {
+    background-color: #0099cc;
+    height: 100%;
+    position: absolute;
+    line-height: inherit
+}
+
+#progress {
+    width: 100%;
+    height: 100px;
+    position: relative;
+    background-color: #f1f1f1;
+    visibility: none;
+}
+
+#progress .filled {
+    background-color: #0099cc;
+    height: 100%;
+    position: absolute;
+    line-height: inherit
+}
+</style>
+
+<script>
+
+var progressTimer = 0;
+
+var scheduleProgressTimer = function(id, duration, interval) {
+    if ( progressTimer != 0 )
+        clearTimeout(progressTimer);
+    
+    progressTimer = setTimeout( function() { pollProgress(id, duration) }, interval );
+};
+
+function startTranscode(id, duration, start) {
+    $.blockUI({ message: $('#progress') });
+    
+    console.log("startTranscode(id=" + id + ", duration=" + duration + ", start=" + start + ")");
+    
+    // long-running transcode call
+    $.ajax( {
+        url: "/hls/index.cgi",
+        type: "GET",
+        dataType: 'json',
+        data: {
+            action: 'transcode',
+            id: id,
+            duration: duration,
+            start: start,
+        },
+        success: function(data) {
+            if (data.error) {
+                console.log("action=transcode id=" + id + " failed");
+                console.dir(data);
+                ("#progress .filled").html('Error: ' + JSON.stringify(data));
+            }
+            else if (data.redirect) {
+                // Fill progress bar fully, looks better
+                $("#progress .filled").css('width', '100%');
+                
+                console.log('done transcoding, redirect to ' + data.redirect);
+                console.dir(data);
+                window.location.replace(data.redirect);
+            }                
+        },
+        error: function(data) {
+            console.log("action=transcode id=" + id + " failed");
+            console.dir(data);
+            ("#progress .filled").html('Error: ' + JSON.stringify(data));
+        },
+    } );
+    
+    // progress checker
+    scheduleProgressTimer(id, duration, 1000);
+}
+
+function pollProgress(id, duration) {
+    $.ajax( {
+        url: "/hls/index.cgi",
+        type: "GET",
+        dataType: 'json',
+        data: {
+            action: 'transcode_progress',
+            id: id,
+            duration: duration,
+        },
+        success: function(data) {
+            console.log('got progress data');
+            console.dir(data);
+            
+            $("#progress .filled").css('width', data.percent + '%');
+            
+            scheduleProgressTimer(id, duration, 1000);
+        },
+        error: function(data) {
+            console.log('progress error');
+            console.dir(data);
+            
+            $("#progress .filled").html('Error: ' + JSON.stringify(data));
+        },
+    } );
+}
+
+</script>
+
+</head>
+<body>
+    
+<pre>[% debug %]</pre>
+
+<div class="list">
+    
+[% IF error_html; error_html; ELSE %]
+
+[% FOREACH v IN video_list %]
+    [% IF v.transcoded %]
+    <a href="/hls/index.cgi?action=play&id=[% v.id %]&start=[% v.position %]">
+    [% ELSE %]
+    <a href="#[% v.id %]" onclick="startTranscode([% v.id %], [% v.duration %], [% v.position %]);">
+    [% END %]
+        <figure>
+            <img src="/hls/images/poster_[% v.id %].jpg" />
+            <div class="empty-bar">
+                <div class="filled-bar" style="width:[% v.watched %]%"></div>
+            </div>
+            <figcaption [% IF v.transcoded %]class="playable"[% END %]>
+                [% v.title %] <b>[% v.hms %]</b>[% IF v.position_hms %] @ [% v.position_hms; END %]
+            </figcaption>
+        </figure>
+    </a>
+[% END %]
+
+[% END %]
+
+</div>
+
+<div id="progress">
+    <div class="filled"></div>
+</div>
+
+</body>
+</html>
